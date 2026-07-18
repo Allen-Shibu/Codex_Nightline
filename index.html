@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CivicPulse — Kochi</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQkP9W7Xh1N1gR1jQ6Z8G8T2E5J0fY=" crossorigin="">
+  <style>
+    :root { --ink:#10211f; --muted:#63706e; --paper:#f7f5ef; --card:#fffdf8; --teal:#0e6b61; --amber:#ecaa26; --orange:#ed6a26; --red:#d93d38; }
+    * { box-sizing:border-box } body { margin:0; background:var(--paper); color:var(--ink); font:15px/1.45 Inter,ui-sans-serif,system-ui,sans-serif }
+    header { padding:18px max(20px,calc((100vw - 760px)/2)); display:flex; align-items:center; justify-content:space-between } h1 { margin:0; font-size:22px; letter-spacing:-.8px } h1 span { color:var(--teal) } .tag { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.08em }
+    main { max-width:760px; margin:auto; padding:0 20px 32px } .notice,.pulse,.prediction,.card { border-radius:14px; padding:14px 16px; margin-bottom:12px; background:var(--card); box-shadow:0 2px 10px #10211f0c }
+    .notice { font-size:13px; color:var(--muted) } .pulse { border-left:4px solid var(--teal); font-weight:650 } .prediction { border:2px dashed var(--amber); background:#fff8df } .prediction b { color:#815b00 }
+    #map { height:350px; border-radius:18px; overflow:hidden; box-shadow:0 5px 18px #10211f1a; margin-bottom:14px; background:#dce8df } .map-error { padding:28px; text-align:center; color:var(--muted) }
+    form { display:flex; gap:8px; margin:14px 0 } input { min-width:0; flex:1; border:1px solid #ced7d3; border-radius:10px; padding:12px; font:inherit; background:white } button { border:0; border-radius:10px; background:var(--teal); color:white; cursor:pointer; padding:11px 14px; font:inherit; font-weight:700 } button:hover { filter:brightness(.92) } button.secondary { background:#e5ece8; color:var(--ink) }
+    .section-title { display:flex; justify-content:space-between; align-items:center; margin:22px 0 9px } .section-title h2 { margin:0; font-size:16px }.incident { cursor:pointer; display:grid; grid-template-columns:12px 1fr auto; gap:11px; align-items:start }.dot { width:12px; height:12px; border-radius:50%; margin-top:5px }.reported { background:var(--amber) }.confirmed { background:var(--orange) }.critical { background:var(--red); box-shadow:0 0 0 5px #d93d3825 }.incident h3 { font-size:15px; margin:0 0 2px }.incident p,.meta { margin:0; color:var(--muted); font-size:13px }.count { font-size:13px; white-space:nowrap; color:var(--muted) }
+    dialog { max-width:520px; border:0; border-radius:16px; padding:0; box-shadow:0 12px 50px #0005 } dialog::backdrop { background:#10211f88 } .modal { padding:22px } .modal h2 { margin-top:0 } .modal pre { white-space:pre-wrap; font:inherit; padding:13px; background:#f2f4f1; border-radius:9px; color:#293634 }.actions { display:flex; gap:8px; justify-content:flex-end; margin-top:18px }.marker { width:20px; height:20px; border-radius:50%; border:3px solid white; box-shadow:0 1px 5px #0007 }.marker.confirmed { width:27px; height:27px }.marker.critical { width:35px; height:35px; border-width:4px }
+    @media (max-width:540px) { #map { height:300px } form { flex-wrap:wrap } form input { flex-basis:100% } form button { flex:1 } }
+  </style>
+</head>
+<body>
+  <header><h1>Civic<span>Pulse</span></h1><span class="tag">Kochi civic board</span></header>
+  <main>
+    <div class="notice">Proof of concept — reports are shared between this browser’s tabs, not sent to civic authorities.</div>
+    <div id="pulse" class="pulse"></div>
+    <div class="prediction"><b>Predictive warning</b><br>Heavy rain expected — Kaloor has flooded in 4 of the last 5 similar days.</div>
+    <div id="map" aria-label="Live map of civic incidents"></div>
+    <form id="report-form"><input id="report" aria-label="Describe a civic issue" required maxlength="240" placeholder="What’s happening? e.g. Metro stuck near Kaloor"><button>Report</button><button type="button" class="secondary" id="area">Change area</button></form>
+    <div class="section-title"><h2>Open incidents</h2><span id="area-label" class="meta"></span></div>
+    <section id="feed" aria-live="polite"></section>
+  </main>
+  <dialog id="detail"><div class="modal"><div id="detail-content"></div><div class="actions"><button class="secondary" onclick="detail.close()">Close</button></div></div></dialog>
+  <dialog id="letter"><div class="modal"><h2>Draft complaint</h2><pre id="letter-text"></pre><div class="actions"><button class="secondary" onclick="letter.close()">Close</button><button onclick="navigator.clipboard.writeText(letterText.textContent);this.textContent='Copied'">Copy letter</button></div></div></dialog>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script>
+    const KEY = 'civicpulse-incidents-v1', AREA = 'civicpulse-area-v1';
+    const kochi = { label:'Kochi Metro corridor', lat:9.9816, lng:76.2999 };
+    const seeded = [
+      {id:'pothole-kaloor',category:'POTHOLE',description:'Large pothole causing two-wheelers to swerve near Kaloor Junction.',location:{label:'Kaloor Junction',lat:10.0005,lng:76.2996},reportCount:7,firstReported:Date.now()-1000*60*60*24*12,lastReported:Date.now()},
+      {id:'delay-aluva',category:'METRO DELAY',description:'Metro delayed near Aluva station.',location:{label:'Aluva Metro',lat:10.1097,lng:76.3497},reportCount:2,firstReported:Date.now()-1000*60*24,lastReported:Date.now()},
+      {id:'power-vyttila',category:'POWER CUT',description:'Power cut around Vyttila mobility hub.',location:{label:'Vyttila',lat:9.9674,lng:76.3183},reportCount:3,firstReported:Date.now()-1000*60*60*3,lastReported:Date.now()}
+    ];
+    let map, markers, currentArea = JSON.parse(localStorage.getItem(AREA) || 'null') || kochi;
+    const $ = id => document.getElementById(id);
+    const severity = n => n >= 6 ? 'critical' : n >= 3 ? 'confirmed' : 'reported';
+    const age = t => { const d = Math.max(0, Math.floor((Date.now()-t)/86400000)); return d ? `open ${d} day${d===1?'':'s'}` : 'reported today'; };
+    const incidents = () => JSON.parse(localStorage.getItem(KEY) || 'null') || seeded;
+    const save = list => localStorage.setItem(KEY, JSON.stringify(list));
+    function category(text) { const t=text.toLowerCase(); if(/metro|train|station|rail/.test(t)) return 'METRO DELAY'; if(/power|electric/.test(t)) return 'POWER CUT'; if(/pothole|road|flood/.test(t)) return 'POTHOLE'; if(/traffic|jam|block/.test(t)) return 'TRAFFIC'; return 'CIVIC ISSUE'; }
+    function matches(text, item) { const a=category(text), words=text.toLowerCase().split(/\W+/).filter(w=>w.length>3); return a===item.category && (words.some(w=>item.description.toLowerCase().includes(w)) || a !== 'CIVIC ISSUE'); }
+    function makeLetter(i) { const authority = i.category==='METRO DELAY' ? 'Kochi Metro Rail Limited' : i.category==='POWER CUT' ? 'Kerala State Electricity Board' : 'Kochi Municipal Corporation'; return `To: ${authority}\n\nSubject: Request to address ${i.category.toLowerCase()} at ${i.location.label}\n\nDear Sir/Madam,\n\nI am writing to report ${i.description} This issue has been ${age(i.firstReported)} and has received ${i.reportCount} community reports. I request that it be inspected and addressed at the earliest.\n\nSincerely,\nA concerned commuter`; }
+    function render() { const list=incidents().filter(i=>!i.resolved); const critical=list.filter(i=>severity(i.reportCount)==='critical').length; $('pulse').textContent = critical ? `${critical} critical issue${critical>1?'s':''} need attention; ${list.length-critical} other live report${list.length-critical===1?'':'s'} nearby.` : `${list.length} live community report${list.length===1?'':'s'} across Kochi.`; $('area-label').textContent=currentArea.label;
+      $('feed').innerHTML=list.sort((a,b)=>b.reportCount-a.reportCount).map(i=>`<article class="card incident" data-id="${i.id}"><span class="dot ${severity(i.reportCount)}"></span><div><h3>${i.category} · ${i.location.label}</h3><p>${i.description}</p><p class="meta">${age(i.firstReported)} · ${severity(i.reportCount)}</p></div><span class="count">${'│'.repeat(Math.min(i.reportCount,8))} ${i.reportCount}</span></article>`).join(''); document.querySelectorAll('.incident').forEach(e=>e.onclick=()=>show(e.dataset.id)); renderMap(list); }
+    function renderMap(list) { if(!window.L) { $('map').innerHTML='<div class="map-error">Map tiles are unavailable. Your reports and live board still work.</div>'; return; } if(!map) { map=L.map('map',{zoomControl:false}).setView([currentArea.lat,currentArea.lng],12); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors'}).addTo(map); markers=L.layerGroup().addTo(map); } map.setView([currentArea.lat,currentArea.lng]); markers.clearLayers(); list.forEach(i=>L.marker([i.location.lat,i.location.lng],{icon:L.divIcon({className:'',html:`<div class="marker ${severity(i.reportCount)}"></div>`,iconSize:[35,35],iconAnchor:[17,17]})}).addTo(markers).bindPopup(`<b>${i.category}</b><br>${i.description}`).on('click',()=>show(i.id))); }
+    function show(id) { const i=incidents().find(x=>x.id===id), s=severity(i.reportCount); $('detail-content').innerHTML=`<p class="tag">${s} · ${age(i.firstReported)}</p><h2>${i.category}</h2><p>${i.description}</p><p class="meta">${i.location.label} · ${i.reportCount} community confirmations</p>${s==='critical' && Date.now()-i.firstReported>86400000 ? '<div class="actions"><button id="open-letter">View draft letter</button></div>' : ''}`; detail.showModal(); const b=$('open-letter'); if(b) b.onclick=()=>{ letterText.textContent=makeLetter(i); letter.showModal(); }; }
+    $('report-form').onsubmit=e=>{ e.preventDefault(); const text=$('report').value.trim(), list=incidents(), hit=list.find(i=>matches(text,i)); if(hit) { hit.reportCount++; hit.lastReported=Date.now(); } else { const c=category(text), n=list.length+1; list.push({id:`report-${Date.now()}`,category:c,description:text,location:{label:currentArea.label,lat:currentArea.lat+(n%3-1)*.008,lng:currentArea.lng+(n%2?.006:-.006)},reportCount:1,firstReported:Date.now(),lastReported:Date.now()}); } save(list); $('report').value=''; render(); };
+    $('area').onclick=()=>{ const label=prompt('Your area in Kochi:',currentArea.label); if(!label) return; currentArea={...kochi,label}; localStorage.setItem(AREA,JSON.stringify(currentArea)); render(); };
+    window.addEventListener('storage',e=>{if(e.key===KEY||e.key===AREA){ currentArea=JSON.parse(localStorage.getItem(AREA)||'null')||kochi; render(); }});
+    if(navigator.geolocation) navigator.geolocation.getCurrentPosition(p=>{ currentArea={label:'Your current area',lat:p.coords.latitude,lng:p.coords.longitude}; localStorage.setItem(AREA,JSON.stringify(currentArea)); render(); },()=>{} ,{timeout:5000});
+    render();
+  </script>
+</body>
+</html>
