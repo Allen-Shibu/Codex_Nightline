@@ -13,6 +13,14 @@ npm run dev
 
 Open the Vite URL (normally `http://localhost:5173`). The frontend proxies `/api` to the API at port 3001.
 
+If you use a locally installed PostgreSQL server instead of Docker, create the development database once:
+
+```sh
+sudo -u postgres psql -c "CREATE ROLE civicpulse LOGIN PASSWORD 'civicpulse';"
+sudo -u postgres psql -c "CREATE DATABASE civicpulse OWNER civicpulse;"
+PGPASSWORD=civicpulse psql -h localhost -U civicpulse -d civicpulse -f db/init.sql
+```
+
 `db/init.sql` creates the schema and demo incidents. It runs only when PostgreSQL first creates its data volume. To reset demo data, run `docker compose down -v` before starting again.
 
 ## Voting
