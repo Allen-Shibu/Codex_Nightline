@@ -8,6 +8,7 @@ CREATE TABLE incidents (
   latitude double precision NOT NULL CHECK (latitude BETWEEN -90 AND 90),
   longitude double precision NOT NULL CHECK (longitude BETWEEN -180 AND 180),
   report_count integer NOT NULL DEFAULT 1 CHECK (report_count > 0),
+  impact_severity text NOT NULL DEFAULT 'medium',
   first_reported timestamptz NOT NULL DEFAULT now(),
   last_reported timestamptz NOT NULL DEFAULT now(),
   resolved boolean NOT NULL DEFAULT false
@@ -29,6 +30,7 @@ CREATE TABLE incident_reports (
   latitude double precision NOT NULL,
   longitude double precision NOT NULL,
   rain_related boolean NOT NULL DEFAULT false,
+  impact_severity text NOT NULL DEFAULT 'medium',
   reported_at timestamptz NOT NULL DEFAULT now()
 );
 
