@@ -11,6 +11,7 @@ const categories = (text: string) => /metro/i.test(text) ? 'METRO DELAY' : /trai
 const rainRelated = (text: string) => /rain|flood|waterlog|overflow|drain/i.test(text)
 const impactFrom = (text: string) => /fire|electrocut|collapse|trapped|injur|accident|life.threat/i.test(text) ? 'critical' : /flood|power cut|road block|stuck|stranded|major/i.test(text) ? 'high' : /delay|pothole|traffic|waterlog/i.test(text) ? 'medium' : 'low'
 const communitySeverity = (count: number) => count >= 6 ? 'critical' : count >= 3 ? 'confirmed' : 'reported'
+const needsPhoto = (category: string) => category === 'POTHOLE'
 const upload = multer({ storage: multer.diskStorage({ destination: 'uploads/', filename: (_request, file, done) => done(null, `${randomUUID()}${extname(file.originalname).toLowerCase()}`) }), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: (_request, file, done) => done(null, file.mimetype.startsWith('image/')) })
 const row = (incident: Record<string, unknown>) => ({ id: incident.id, category: incident.category, description: incident.description, location: { label: incident.location_label, lat: incident.latitude, lng: incident.longitude }, imageUrl: incident.image_url, impactSeverity: incident.impact_severity, analysisConfidence: Number(incident.analysis_confidence ?? 0), reportCount: incident.report_count, firstReported: new Date(String(incident.first_reported)).getTime(), lastReported: new Date(String(incident.last_reported)).getTime(), resolutionStatus: incident.resolution_status ?? 'open', resolutionCount: Number(incident.resolution_count ?? 0) })
 const incidentWithResolutionCount = async (client: Pool | PoolClient, id: string) => (await client.query('SELECT i.*, count(r.incident_id)::integer AS resolution_count FROM incidents i LEFT JOIN incident_resolutions r ON r.incident_id = i.id WHERE i.id = $1 GROUP BY i.id', [id])).rows[0]
@@ -79,7 +80,7 @@ app.post('/api/incidents/report', upload.single('image'), async (request, respon
     try { decision = await aiMatch(description, location as { label: string; lat: number; lng: number }, nearby.rows) } catch (error) { console.warn(error) }
     const category = decision?.category ?? categories(description)
     const impactSeverity = decision?.impactSeverity ?? impactFrom(description)
-    const requiresPhoto = category === 'POTHOLE' || decision?.requiresPhoto === true
+    const requiresPhoto = needsPhoto(category) || decision?.requiresPhoto === true
     if (requiresPhoto && !request.file) { await client.query('ROLLBACK'); return response.status(400).json({ error: `A photo is required for ${category.toLowerCase()} reports.`, requiresPhoto: true, category }) }
     const match = decision?.matchId ? nearby.rows.find(item => item.id === decision.matchId) : !process.env.OPENAI_API_KEY ? nearby.rows.find(item => item.category === category) : undefined
     const existing = match ? { rowCount: 1, rows: [match] } : { rowCount: 0, rows: [] }
@@ -124,6 +125,7 @@ app.post('/api/incidents/:id/resolutions', upload.single('image'), async (reques
     if (!current.rowCount) { await client.query('ROLLBACK'); return response.status(404).json({ error: 'Incident not found.' }) }
     const incident = current.rows[0]
     if (incident.resolved) { await client.query('ROLLBACK'); return response.status(409).json({ error: 'This incident is already resolved.' }) }
+    if (needsPhoto(incident.category) && !request.file) { await client.query('ROLLBACK'); return response.status(400).json({ error: 'A repair photo is required to resolve a pothole.' }) }
     const submittedLocation = { lat: Number(location.lat), lng: Number(location.lng) }
     if (gpsDistance(submittedLocation, { lat: Number(incident.latitude), lng: Number(incident.longitude) }) > 250) { await client.query('ROLLBACK'); return response.status(400).json({ error: 'You need to be within 250 m of the reported issue to verify its resolution.' }) }
     const proof = await client.query('INSERT INTO incident_resolutions (incident_id, voter_id, note, image_url, latitude, longitude) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING RETURNING incident_id', [incident.id, voterId, request.body.note?.trim() || null, request.file ? `/uploads/${request.file.filename}` : null, submittedLocation.lat, submittedLocation.lng])
