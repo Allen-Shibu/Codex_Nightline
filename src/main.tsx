@@ -4,6 +4,7 @@ import './style.css'
 
 type Severity = 'reported' | 'confirmed' | 'critical'
 type Incident = { id: string; category: string; description: string; location: Location; imageUrl?: string | null; reportCount: number; firstReported: number; lastReported: number }
+type Prediction = { location: string; floodDays: number; rainDays: number }
 type Location = { label: string; lat: number; lng: number }
 type LeafletMap = { setView: (position: [number, number], zoom?: number) => LeafletMap; on: (event: string, handler: (event: { latlng: { lat: number; lng: number } }) => void) => void; remove: () => void }
 
@@ -36,10 +37,11 @@ function App() {
   const [text, setText] = useState('')
   const [image, setImage] = useState<File | null>(null)
   const [apiError, setApiError] = useState<string | null>(null)
+  const [prediction, setPrediction] = useState<Prediction | null>(null)
   const [selected, setSelected] = useState<Incident | null>(null)
   const [letter, setLetter] = useState<Incident | null>(null)
   const open = useMemo(() => [...incidents].sort((a, b) => b.reportCount - a.reportCount), [incidents])
-  const load = async () => { try { const response = await fetch('/api/incidents'); if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) return setApiError('Live data is unavailable. Start the CivicPulse API to load reports.'); setIncidents(await response.json() as Incident[]); setApiError(null) } catch { setApiError('Live data is unavailable. Start the CivicPulse API to load reports.') } }
+  const load = async () => { try { const [response, predictionResponse] = await Promise.all([fetch('/api/incidents'), fetch('/api/predictions')]); if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) return setApiError('Live data is unavailable. Start the CivicPulse API to load reports.'); setIncidents(await response.json() as Incident[]); if (predictionResponse.ok && predictionResponse.headers.get('content-type')?.includes('application/json')) setPrediction((await predictionResponse.json() as Prediction[])[0] ?? null); setApiError(null) } catch { setApiError('Live data is unavailable. Start the CivicPulse API to load reports.') } }
   useEffect(() => { void load(); const timer = setInterval(() => void load(), 5_000); return () => clearInterval(timer) }, [])
   useEffect(() => { if (!navigator.geolocation) return setLocationError('This browser cannot provide your location.'); const watch = navigator.geolocation.watchPosition(position => { const next = { label: 'Your current location', lat: position.coords.latitude, lng: position.coords.longitude }; const accurate = position.coords.accuracy <= 150; localStorage.setItem(AREA_KEY, JSON.stringify(next)); setArea(next); setLocationAccuracy(position.coords.accuracy); setLocationReady(accurate); setLocationError(accurate ? null : `Location is only accurate to ±${Math.round(position.coords.accuracy)} m. Use a GPS-enabled device or wait for a better signal.`) }, () => { setLocationReady(false); setLocationError('Location permission is required to submit a report.') }, { enableHighAccuracy: true, timeout: 10_000, maximumAge: 10_000 }); return () => navigator.geolocation.clearWatch(watch) }, [])
   const submit = async (event: FormEvent) => { event.preventDefault(); const description = text.trim(); if (!description || !locationReady) return; const body = new FormData(); body.append('description', description); body.append('location', JSON.stringify(area)); if (image) body.append('image', image); const response = await fetch('/api/incidents/report', { method: 'POST', body }); if (response.ok) { setText(''); setImage(null); await load() } }
@@ -53,7 +55,7 @@ function App() {
         <p className="notice"><b>How it works</b><br />Report once, confirm together. Critical issues become impossible to ignore.</p>
         {apiError && <p className="api-error">{apiError}</p>}
         <p className="pulse">{critical ? `${critical} critical issue${critical > 1 ? 's' : ''} need attention; ${open.length - critical} other live reports nearby.` : `${open.length} live community reports across Kochi.`}</p>
-        <p className="prediction"><b>Predictive warning</b><br />Heavy rain expected — Kaloor has flooded in 4 of the last 5 similar days.</p>
+        <p className="prediction"><b>{prediction ? 'Community flood warning' : 'Flood prediction'}</b><br />{prediction ? `Rain-related reports are active — ${prediction.location} flooded on ${prediction.floodDays} of ${prediction.rainDays} recorded rain days.` : 'Warnings will appear after citizens report repeated flooding during rain at the same location.'}</p>
         <section className="stats"><div><b>{open.length}</b><span>Open now</span></div><div><b>{critical}</b><span>Critical</span></div><div><b>{confirmations}</b><span>Reports</span></div></section>
         <section className="composer"><div className="section-title"><h2>Report an issue</h2><span>{locationReady ? 'GPS location ready' : 'Finding your location'}</span></div><form onSubmit={submit}><input value={text} onChange={event => setText(event.target.value)} maxLength={240} placeholder="What's happening? e.g. Metro stuck near Kaloor" aria-label="Describe a civic issue" /><p className="pin-status">📍 {locationError ?? (locationReady ? `GPS accuracy ±${Math.round(locationAccuracy ?? 0)} m · ${area.lat.toFixed(4)}, ${area.lng.toFixed(4)}` : 'Waiting for location permission…')}</p><label className="upload">⌁ {image ? image.name : 'Add a photo (optional)'}<input type="file" accept="image/*" onChange={event => setImage(event.target.files?.[0] ?? null)} /></label><button disabled={!locationReady}>Submit report</button></form></section>
         <div className="section-title"><h2>Open incidents</h2><span className="meta">Live updates</span></div>

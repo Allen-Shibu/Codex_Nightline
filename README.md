@@ -32,3 +32,7 @@ Reports may include one image up to 5 MB. Images are stored in the local `upload
 ## AI incident matching
 
 Set `OPENAI_API_KEY` before starting the API to have the server send each report and nearby open incidents to OpenAI for a structured match-or-new decision. The key stays on the server. Without it, CivicPulse uses the local category/location fallback so the demo remains usable offline.
+
+## Citizen-only flood warning
+
+Every submission is retained as an `incident_reports` event, even when it merges into a live incident. Reports mentioning rain, flooding, waterlogging, overflow, or drains are marked rain-related. A flood warning appears only after citizens have reported flooding on at least three different rain-related days within the same roughly 500 m map cell and there is a new rain-related report there within six hours.

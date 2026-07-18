@@ -20,6 +20,18 @@ CREATE TABLE incident_votes (
   PRIMARY KEY (incident_id, voter_id)
 );
 
+CREATE TABLE incident_reports (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  incident_id uuid REFERENCES incidents(id) ON DELETE SET NULL,
+  category text NOT NULL,
+  description text NOT NULL,
+  location_label text NOT NULL,
+  latitude double precision NOT NULL,
+  longitude double precision NOT NULL,
+  rain_related boolean NOT NULL DEFAULT false,
+  reported_at timestamptz NOT NULL DEFAULT now()
+);
+
 ALTER TABLE incidents ADD COLUMN IF NOT EXISTS image_url text;
 
 INSERT INTO incidents (id, category, description, location_label, latitude, longitude, report_count, first_reported)

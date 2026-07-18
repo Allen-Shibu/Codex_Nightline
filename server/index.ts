@@ -7,7 +7,8 @@ import { randomUUID } from 'node:crypto'
 const app = express()
 const pool = new Pool({ connectionString: process.env.DATABASE_URL ?? 'postgres://civicpulse:civicpulse@localhost:5432/civicpulse' })
 const port = Number(process.env.PORT ?? 3001)
-const categories = (text: string) => /metro/i.test(text) ? 'METRO DELAY' : /train|railway|rail/i.test(text) ? 'TRAIN DELAY' : /power|electric/i.test(text) ? 'POWER CUT' : /pothole|road|flood/i.test(text) ? 'POTHOLE' : /traffic|jam|block/i.test(text) ? 'TRAFFIC' : 'CIVIC ISSUE'
+const categories = (text: string) => /metro/i.test(text) ? 'METRO DELAY' : /train|railway|rail(?:\s|$)/i.test(text) ? 'TRAIN DELAY' : /flood|waterlog|overflow/i.test(text) ? 'FLOODING' : /power|electric/i.test(text) ? 'POWER CUT' : /pothole|road/i.test(text) ? 'POTHOLE' : /traffic|jam|block/i.test(text) ? 'TRAFFIC' : 'CIVIC ISSUE'
+const rainRelated = (text: string) => /rain|flood|waterlog|overflow|drain/i.test(text)
 const upload = multer({ storage: multer.diskStorage({ destination: 'uploads/', filename: (_request, file, done) => done(null, `${randomUUID()}${extname(file.originalname).toLowerCase()}`) }), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: (_request, file, done) => done(null, file.mimetype.startsWith('image/')) })
 const row = (incident: Record<string, unknown>) => ({ id: incident.id, category: incident.category, description: incident.description, location: { label: incident.location_label, lat: incident.latitude, lng: incident.longitude }, imageUrl: incident.image_url, reportCount: incident.report_count, firstReported: new Date(String(incident.first_reported)).getTime(), lastReported: new Date(String(incident.last_reported)).getTime() })
 
@@ -39,6 +40,28 @@ app.get('/api/incidents', async (_request, response, next) => {
   try { response.json((await pool.query('SELECT * FROM incidents WHERE NOT resolved ORDER BY report_count DESC, last_reported DESC')).rows.map(row)) } catch (error) { next(error) }
 })
 
+app.get('/api/predictions', async (_request, response, next) => {
+  try {
+    const result = await pool.query(`
+      WITH rain_events AS (
+        SELECT *, floor(latitude * 200) / 200 AS lat_cell, floor(longitude * 200) / 200 AS lng_cell
+        FROM incident_reports
+        WHERE rain_related AND reported_at > now() - interval '365 days'
+      )
+      SELECT min(location_label) AS location_label,
+             count(DISTINCT reported_at::date) FILTER (WHERE category = 'FLOODING')::int AS flood_days,
+             count(DISTINCT reported_at::date)::int AS rain_days
+      FROM rain_events
+      GROUP BY lat_cell, lng_cell
+      HAVING count(DISTINCT reported_at::date) FILTER (WHERE category = 'FLOODING') >= 3
+         AND count(*) FILTER (WHERE reported_at > now() - interval '6 hours') > 0
+      ORDER BY flood_days DESC
+      LIMIT 1
+    `)
+    response.json(result.rows.map(item => ({ location: item.location_label, floodDays: item.flood_days, rainDays: item.rain_days })))
+  } catch (error) { next(error) }
+})
+
 app.post('/api/incidents/report', upload.single('image'), async (request, response, next) => {
   const description = request.body.description
   let location: { label?: unknown; lat?: unknown; lng?: unknown } | undefined
@@ -55,6 +78,7 @@ app.post('/api/incidents/report', upload.single('image'), async (request, respon
     const existing = match ? { rowCount: 1, rows: [match] } : { rowCount: 0, rows: [] }
     const imageUrl = request.file ? `/uploads/${request.file.filename}` : null
     const result = existing.rowCount ? await client.query('UPDATE incidents SET report_count = report_count + 1, last_reported = now(), image_url = COALESCE(image_url, $2) WHERE id = $1 RETURNING *', [existing.rows[0].id, imageUrl]) : await client.query('INSERT INTO incidents (category, description, location_label, latitude, longitude, image_url) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *', [category, description.trim(), location.label.slice(0, 100), location.lat, location.lng, imageUrl])
+    await client.query('INSERT INTO incident_reports (incident_id, category, description, location_label, latitude, longitude, rain_related) VALUES ($1, $2, $3, $4, $5, $6, $7)', [result.rows[0].id, category, description.trim(), location.label.slice(0, 100), location.lat, location.lng, rainRelated(description)])
     await client.query('COMMIT')
     response.status(existing.rowCount ? 200 : 201).json(row(result.rows[0]))
   } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() }
@@ -79,6 +103,7 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
 
 async function start() {
   await pool.query('ALTER TABLE incidents ADD COLUMN IF NOT EXISTS image_url text')
+  await pool.query('CREATE TABLE IF NOT EXISTS incident_reports (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), incident_id uuid REFERENCES incidents(id) ON DELETE SET NULL, category text NOT NULL, description text NOT NULL, location_label text NOT NULL, latitude double precision NOT NULL, longitude double precision NOT NULL, rain_related boolean NOT NULL DEFAULT false, reported_at timestamptz NOT NULL DEFAULT now())')
   app.listen(port, () => console.log(`CivicPulse API listening on http://localhost:${port}`))
 }
 
