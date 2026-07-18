@@ -14,7 +14,7 @@ const kochi: Location = { label: 'Kochi Metro corridor', lat: 9.9816, lng: 76.29
 
 const severity = (count: number): Severity => count >= 6 ? 'critical' : count >= 3 ? 'confirmed' : 'reported'
 const age = (time: number) => { const days = Math.floor((Date.now() - time) / 86_400_000); return days ? `open ${days} day${days === 1 ? '' : 's'}` : 'reported today' }
-const readArea = () => JSON.parse(localStorage.getItem(AREA_KEY) ?? 'null') as Location | null ?? kochi
+const readArea = () => { try { return JSON.parse(localStorage.getItem(AREA_KEY) ?? 'null') as Location | null ?? kochi } catch { localStorage.removeItem(AREA_KEY); return kochi } }
 const voterId = () => localStorage.getItem('civicpulse-voter-id') ?? (() => { const id = crypto.randomUUID(); localStorage.setItem('civicpulse-voter-id', id); return id })()
 
 function Map({ incidents, area, onSelect }: { incidents: Incident[]; area: Location; onSelect: (id: string) => void }) {
@@ -32,10 +32,11 @@ function App() {
   const [area, setArea] = useState(readArea)
   const [text, setText] = useState('')
   const [image, setImage] = useState<File | null>(null)
+  const [apiError, setApiError] = useState<string | null>(null)
   const [selected, setSelected] = useState<Incident | null>(null)
   const [letter, setLetter] = useState<Incident | null>(null)
   const open = useMemo(() => [...incidents].sort((a, b) => b.reportCount - a.reportCount), [incidents])
-  const load = async () => { const response = await fetch('/api/incidents'); if (response.ok) setIncidents(await response.json() as Incident[]) }
+  const load = async () => { try { const response = await fetch('/api/incidents'); if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) return setApiError('Live data is unavailable. Start the CivicPulse API to load reports.'); setIncidents(await response.json() as Incident[]); setApiError(null) } catch { setApiError('Live data is unavailable. Start the CivicPulse API to load reports.') } }
   useEffect(() => { void load(); const timer = setInterval(() => void load(), 5_000); return () => clearInterval(timer) }, [])
   useEffect(() => { navigator.geolocation?.getCurrentPosition(position => { const next = { label: 'Your current area', lat: position.coords.latitude, lng: position.coords.longitude }; localStorage.setItem(AREA_KEY, JSON.stringify(next)); setArea(next) }, undefined, { timeout: 5000 }) }, [])
   const submit = async (event: FormEvent) => { event.preventDefault(); const description = text.trim(); if (!description) return; const body = new FormData(); body.append('description', description); body.append('location', JSON.stringify(area)); if (image) body.append('image', image); const response = await fetch('/api/incidents/report', { method: 'POST', body }); if (response.ok) { setText(''); setImage(null); await load() } }
@@ -48,6 +49,7 @@ function App() {
     <main className="dashboard">
       <aside className="sidebar">
         <p className="notice"><b>How it works</b><br />Report once, confirm together. Critical issues become impossible to ignore.</p>
+        {apiError && <p className="api-error">{apiError}</p>}
         <p className="pulse">{critical ? `${critical} critical issue${critical > 1 ? 's' : ''} need attention; ${open.length - critical} other live reports nearby.` : `${open.length} live community reports across Kochi.`}</p>
         <p className="prediction"><b>Predictive warning</b><br />Heavy rain expected — Kaloor has flooded in 4 of the last 5 similar days.</p>
         <section className="stats"><div><b>{open.length}</b><span>Open now</span></div><div><b>{critical}</b><span>Critical</span></div><div><b>{confirmations}</b><span>Reports</span></div></section>
