@@ -18,3 +18,5 @@ Open the Vite URL (normally `http://localhost:5173`). The frontend proxies `/api
 ## Voting
 
 The `incident_votes` primary key allows one confirmation per incident per browser-generated UUID. This is suitable for the demo; production should replace the browser UUID with an authenticated user identity.
+
+Reports may include one image up to 5 MB. Images are stored in the local `uploads/` directory and the database stores their path; use object storage before deploying multiple app instances.

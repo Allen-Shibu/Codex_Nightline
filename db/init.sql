@@ -20,6 +20,8 @@ CREATE TABLE incident_votes (
   PRIMARY KEY (incident_id, voter_id)
 );
 
+ALTER TABLE incidents ADD COLUMN IF NOT EXISTS image_url text;
+
 INSERT INTO incidents (id, category, description, location_label, latitude, longitude, report_count, first_reported)
 VALUES
   ('00000000-0000-4000-8000-000000000001', 'POTHOLE', 'Large pothole causing two-wheelers to swerve near Kaloor Junction.', 'Kaloor Junction', 10.0005, 76.2996, 7, now() - interval '12 days'),
