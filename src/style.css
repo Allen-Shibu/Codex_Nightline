@@ -9,3 +9,4 @@ button:disabled{cursor:not-allowed;opacity:.45}
 .critical-reasons{display:flex;flex-direction:column;gap:6px;margin-top:15px;padding:13px;border:1px solid #88353d;border-radius:10px;background:#2b1518;color:#ffc0ba;font-size:13px}.critical-reasons h3{margin:0 0 3px;color:#fff;font-size:14px}
 .resolution{display:flex;flex-direction:column;gap:6px;margin-top:15px;padding:13px;border:1px solid #543b3e;border-radius:10px;background:#20191a;color:#d6c5c6;font-size:13px}.resolution b{color:#fff}.resolution-form{display:grid;gap:8px;margin-top:5px}.resolution-form input{min-width:0;border:1px solid #514144;border-radius:8px;background:#111114;color:#fff;padding:10px;font:inherit}.resolution-form .upload{width:auto}
 .resolution-error{margin:0;color:#ffaaa5;font-size:12px}
+.photo-required{border-color:#ff7474!important;color:#ffb0ab!important}

@@ -41,6 +41,8 @@ The browser UUID mechanism is intentionally lightweight for the demo. A producti
 
 Set `OPENAI_API_KEY` before starting the API to have the server send each report and nearby open incidents to OpenAI for a structured match-or-new decision. The key stays on the server. Without it, CivicPulse uses the local category/location fallback so the demo remains usable offline.
 
+The same structured decision identifies when a report needs visual evidence. Physical conditions such as potholes require an image server-side; service and text reports such as metro delays and power cuts do not. The pothole rule remains enforced when the AI key is unavailable.
+
 ## Citizen-only flood warning
 
 Every submission is retained as an `incident_reports` event, even when it merges into a live incident. Reports mentioning rain, flooding, waterlogging, overflow, or drains are marked rain-related. A flood warning appears only after citizens have reported flooding on at least three different rain-related days within the same roughly 500 m map cell and there is a new rain-related report there within six hours.
