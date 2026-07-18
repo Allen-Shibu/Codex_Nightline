@@ -10,6 +10,7 @@ const port = Number(process.env.PORT ?? 3001)
 const categories = (text: string) => /metro/i.test(text) ? 'METRO DELAY' : /train|railway|rail(?:\s|$)/i.test(text) ? 'TRAIN DELAY' : /flood|waterlog|overflow/i.test(text) ? 'FLOODING' : /power|electric/i.test(text) ? 'POWER CUT' : /pothole|road/i.test(text) ? 'POTHOLE' : /traffic|jam|block/i.test(text) ? 'TRAFFIC' : 'CIVIC ISSUE'
 const rainRelated = (text: string) => /rain|flood|waterlog|overflow|drain/i.test(text)
 const impactFrom = (text: string) => /fire|electrocut|collapse|trapped|injur|accident|life.threat/i.test(text) ? 'critical' : /flood|power cut|road block|stuck|stranded|major/i.test(text) ? 'high' : /delay|pothole|traffic|waterlog/i.test(text) ? 'medium' : 'low'
+const communitySeverity = (count: number) => count >= 6 ? 'critical' : count >= 3 ? 'confirmed' : 'reported'
 const upload = multer({ storage: multer.diskStorage({ destination: 'uploads/', filename: (_request, file, done) => done(null, `${randomUUID()}${extname(file.originalname).toLowerCase()}`) }), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: (_request, file, done) => done(null, file.mimetype.startsWith('image/')) })
 const row = (incident: Record<string, unknown>) => ({ id: incident.id, category: incident.category, description: incident.description, location: { label: incident.location_label, lat: incident.latitude, lng: incident.longitude }, imageUrl: incident.image_url, impactSeverity: incident.impact_severity, reportCount: incident.report_count, firstReported: new Date(String(incident.first_reported)).getTime(), lastReported: new Date(String(incident.last_reported)).getTime() })
 
@@ -25,13 +26,13 @@ async function aiMatch(description: string, location: { label: string; lat: numb
         { role: 'system', content: 'Match civic reports only when they describe the same real-world event at the same station, road, or corridor. Do not merge merely because categories are alike. Kochi has both Kochi Metro and conventional Indian Railways trains: a report saying "train delayed" is not a metro delay unless it explicitly says metro; if the transport mode is ambiguous, return a new incident. Require both the transport mode and the named location/corridor to agree. Classify impact severity: low for minor inconvenience, medium for a normal disruption, high for a serious public disruption such as flooding or power loss, critical only for immediate danger to life or access.' },
         { role: 'user', content: JSON.stringify({ new_report: { description, location }, open_incidents: candidates.map(item => ({ id: item.id, category: item.category, description: item.description, location: { label: item.location_label, latitude: item.latitude, longitude: item.longitude } })) }) }
       ],
-      response_format: { type: 'json_schema', json_schema: { name: 'incident_match', strict: true, schema: { type: 'object', properties: { match_id: { anyOf: [{ type: 'string' }, { type: 'null' }] }, category: { type: 'string' }, impact_severity: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] } }, required: ['match_id', 'category', 'impact_severity'], additionalProperties: false } } }
+      response_format: { type: 'json_schema', json_schema: { name: 'incident_match', strict: true, schema: { type: 'object', properties: { match_id: { anyOf: [{ type: 'string' }, { type: 'null' }] }, category: { type: 'string' }, impact_severity: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] }, match_confidence: { type: 'integer', minimum: 0, maximum: 100 } }, required: ['match_id', 'category', 'impact_severity', 'match_confidence'], additionalProperties: false } } }
     })
   })
   if (!response.ok) throw new Error(`OpenAI request failed: ${response.status}`)
   const result = await response.json() as { choices?: { message?: { content?: string } }[] }
-  const decision = JSON.parse(result.choices?.[0]?.message?.content ?? '{}') as { match_id?: string | null; category?: string; impact_severity?: string }
-  return { matchId: candidates.some(item => item.id === decision.match_id) ? decision.match_id ?? null : null, category: typeof decision.category === 'string' && decision.category.length <= 50 ? decision.category : categories(description), impactSeverity: ['low', 'medium', 'high', 'critical'].includes(decision.impact_severity ?? '') ? decision.impact_severity! : impactFrom(description) }
+  const decision = JSON.parse(result.choices?.[0]?.message?.content ?? '{}') as { match_id?: string | null; category?: string; impact_severity?: string; match_confidence?: number }
+  return { matchId: candidates.some(item => item.id === decision.match_id) ? decision.match_id ?? null : null, category: typeof decision.category === 'string' && decision.category.length <= 50 ? decision.category : categories(description), impactSeverity: ['low', 'medium', 'high', 'critical'].includes(decision.impact_severity ?? '') ? decision.impact_severity! : impactFrom(description), matchConfidence: Number.isInteger(decision.match_confidence) ? decision.match_confidence! : 0 }
 }
 
 app.use(express.json())
@@ -72,17 +73,20 @@ app.post('/api/incidents/report', upload.single('image'), async (request, respon
   try {
     await client.query('BEGIN')
     const nearby = await client.query('SELECT * FROM incidents WHERE NOT resolved AND abs(latitude - $1) < .03 AND abs(longitude - $2) < .03 ORDER BY last_reported DESC LIMIT 30 FOR UPDATE', [location.lat, location.lng])
-    let decision: { matchId: string | null; category: string; impactSeverity: string } | null = null
+    let decision: { matchId: string | null; category: string; impactSeverity: string; matchConfidence: number } | null = null
     try { decision = await aiMatch(description, location as { label: string; lat: number; lng: number }, nearby.rows) } catch (error) { console.warn(error) }
     const category = decision?.category ?? categories(description)
     const impactSeverity = decision?.impactSeverity ?? impactFrom(description)
     const match = decision?.matchId ? nearby.rows.find(item => item.id === decision.matchId) : !process.env.OPENAI_API_KEY ? nearby.rows.find(item => item.category === category) : undefined
     const existing = match ? { rowCount: 1, rows: [match] } : { rowCount: 0, rows: [] }
+    const previousCount = Number(match?.report_count ?? 0)
+    const previousSeverity = communitySeverity(previousCount)
     const imageUrl = request.file ? `/uploads/${request.file.filename}` : null
     const result = existing.rowCount ? await client.query("UPDATE incidents SET report_count = report_count + 1, last_reported = now(), image_url = COALESCE(image_url, $2), impact_severity = CASE WHEN array_position(ARRAY['low','medium','high','critical'], impact_severity) >= array_position(ARRAY['low','medium','high','critical'], $3) THEN impact_severity ELSE $3 END WHERE id = $1 RETURNING *", [existing.rows[0].id, imageUrl, impactSeverity]) : await client.query('INSERT INTO incidents (category, description, location_label, latitude, longitude, image_url, impact_severity) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *', [category, description.trim(), location.label.slice(0, 100), location.lat, location.lng, imageUrl, impactSeverity])
     await client.query('INSERT INTO incident_reports (incident_id, category, description, location_label, latitude, longitude, rain_related, impact_severity) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [result.rows[0].id, category, description.trim(), location.label.slice(0, 100), location.lat, location.lng, rainRelated(description), impactSeverity])
     await client.query('COMMIT')
-    response.status(existing.rowCount ? 200 : 201).json(row(result.rows[0]))
+    const incident = row(result.rows[0])
+    response.status(existing.rowCount ? 200 : 201).json({ incident, analysis: { candidateCount: nearby.rowCount ?? 0, matched: Boolean(match), matchId: match?.id ?? null, matchDescription: match?.description ?? null, matchConfidence: match ? (decision?.matchConfidence ?? 80) : 0, previousCount, previousSeverity, currentSeverity: communitySeverity(Number(incident.reportCount)), location: incident.location, category: incident.category, impactSeverity: incident.impactSeverity } })
   } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() }
 })
 
