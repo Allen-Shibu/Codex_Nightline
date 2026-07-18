@@ -21,7 +21,7 @@ sudo -u postgres psql -c "CREATE DATABASE civicpulse OWNER civicpulse;"
 PGPASSWORD=civicpulse psql -h localhost -U civicpulse -d civicpulse -f db/init.sql
 ```
 
-`db/init.sql` creates the schema and demo incidents. It runs only when PostgreSQL first creates its data volume. To reset demo data, run `docker compose down -v` before starting again.
+`db/init.sql` creates an empty schema. It runs only when PostgreSQL first creates its data volume. To reset local data, run `docker compose down -v` before starting again.
 
 ## Voting
 
