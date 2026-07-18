@@ -28,3 +28,7 @@ PGPASSWORD=civicpulse psql -h localhost -U civicpulse -d civicpulse -f db/init.s
 The `incident_votes` primary key allows one confirmation per incident per browser-generated UUID. This is suitable for the demo; production should replace the browser UUID with an authenticated user identity.
 
 Reports may include one image up to 5 MB. Images are stored in the local `uploads/` directory and the database stores their path; use object storage before deploying multiple app instances.
+
+## AI incident matching
+
+Set `OPENAI_API_KEY` before starting the API to have the server send each report and nearby open incidents to OpenAI for a structured match-or-new decision. The key stays on the server. Without it, CivicPulse uses the local category/location fallback so the demo remains usable offline.
