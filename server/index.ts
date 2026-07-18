@@ -49,7 +49,8 @@ app.post('/api/incidents/report', upload.single('image'), async (request, respon
     let decision: { matchId: string | null; category: string } | null = null
     try { decision = await aiMatch(description, location as { label: string; lat: number; lng: number }, nearby.rows) } catch (error) { console.warn(error) }
     const category = decision?.category ?? categories(description)
-    const existing = decision?.matchId ? { rowCount: 1, rows: nearby.rows.filter(item => item.id === decision.matchId) } : !process.env.OPENAI_API_KEY ? { rowCount: 1, rows: nearby.rows.filter(item => item.category === category).slice(0, 1) } : { rowCount: 0, rows: [] }
+    const match = decision?.matchId ? nearby.rows.find(item => item.id === decision.matchId) : !process.env.OPENAI_API_KEY ? nearby.rows.find(item => item.category === category) : undefined
+    const existing = match ? { rowCount: 1, rows: [match] } : { rowCount: 0, rows: [] }
     const imageUrl = request.file ? `/uploads/${request.file.filename}` : null
     const result = existing.rowCount ? await client.query('UPDATE incidents SET report_count = report_count + 1, last_reported = now(), image_url = COALESCE(image_url, $2) WHERE id = $1 RETURNING *', [existing.rows[0].id, imageUrl]) : await client.query('INSERT INTO incidents (category, description, location_label, latitude, longitude, image_url) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *', [category, description.trim(), location.label.slice(0, 100), location.lat, location.lng, imageUrl])
     await client.query('COMMIT')
