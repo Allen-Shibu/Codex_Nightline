@@ -9,6 +9,7 @@ CREATE TABLE incidents (
   longitude double precision NOT NULL CHECK (longitude BETWEEN -180 AND 180),
   report_count integer NOT NULL DEFAULT 1 CHECK (report_count > 0),
   impact_severity text NOT NULL DEFAULT 'medium',
+  analysis_confidence integer NOT NULL DEFAULT 0,
   first_reported timestamptz NOT NULL DEFAULT now(),
   last_reported timestamptz NOT NULL DEFAULT now(),
   resolved boolean NOT NULL DEFAULT false
