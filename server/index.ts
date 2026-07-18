@@ -1,12 +1,14 @@
 import express from 'express'
 import multer from 'multer'
 import { Pool } from 'pg'
+import { extname } from 'node:path'
+import { randomUUID } from 'node:crypto'
 
 const app = express()
 const pool = new Pool({ connectionString: process.env.DATABASE_URL ?? 'postgres://civicpulse:civicpulse@localhost:5432/civicpulse' })
 const port = Number(process.env.PORT ?? 3001)
 const categories = (text: string) => /metro/i.test(text) ? 'METRO DELAY' : /train|railway|rail/i.test(text) ? 'TRAIN DELAY' : /power|electric/i.test(text) ? 'POWER CUT' : /pothole|road|flood/i.test(text) ? 'POTHOLE' : /traffic|jam|block/i.test(text) ? 'TRAFFIC' : 'CIVIC ISSUE'
-const upload = multer({ dest: 'uploads/', limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: (_request, file, done) => done(null, file.mimetype.startsWith('image/')) })
+const upload = multer({ storage: multer.diskStorage({ destination: 'uploads/', filename: (_request, file, done) => done(null, `${randomUUID()}${extname(file.originalname).toLowerCase()}`) }), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: (_request, file, done) => done(null, file.mimetype.startsWith('image/')) })
 const row = (incident: Record<string, unknown>) => ({ id: incident.id, category: incident.category, description: incident.description, location: { label: incident.location_label, lat: incident.latitude, lng: incident.longitude }, imageUrl: incident.image_url, reportCount: incident.report_count, firstReported: new Date(String(incident.first_reported)).getTime(), lastReported: new Date(String(incident.last_reported)).getTime() })
 
 async function aiMatch(description: string, location: { label: string; lat: number; lng: number }, candidates: Record<string, unknown>[]) {
