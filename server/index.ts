@@ -3,16 +3,20 @@ import multer from 'multer'
 import { Pool, PoolClient } from 'pg'
 import { extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { mkdirSync } from 'node:fs'
 
 const app = express()
-const pool = new Pool({ connectionString: process.env.DATABASE_URL ?? 'postgres://civicpulse:civicpulse@localhost:5432/civicpulse' })
+const connectionString = process.env.DATABASE_URL ?? 'postgres://civicpulse:civicpulse@localhost:5432/civicpulse'
+const pool = new Pool({ connectionString, ssl: /sslmode=(require|verify-full)/.test(connectionString) ? { rejectUnauthorized: process.env.DATABASE_SSL_NO_VERIFY !== 'true' } : undefined })
 const port = Number(process.env.PORT ?? 3001)
+const uploadDir = process.env.UPLOAD_DIR ?? 'uploads'
+const allowedOrigins = (process.env.CORS_ORIGIN ?? '').split(',').map(item => item.trim()).filter(Boolean)
 const categories = (text: string) => /metro/i.test(text) ? 'METRO DELAY' : /train|railway|rail(?:\s|$)/i.test(text) ? 'TRAIN DELAY' : /flood|waterlog|overflow/i.test(text) ? 'FLOODING' : /power|electric/i.test(text) ? 'POWER CUT' : /pothole|road/i.test(text) ? 'POTHOLE' : /traffic|jam|block/i.test(text) ? 'TRAFFIC' : 'CIVIC ISSUE'
 const rainRelated = (text: string) => /rain|flood|waterlog|overflow|drain/i.test(text)
 const impactFrom = (text: string) => /fire|electrocut|collapse|trapped|injur|accident|life.threat/i.test(text) ? 'critical' : /flood|power cut|road block|stuck|stranded|major/i.test(text) ? 'high' : /delay|pothole|traffic|waterlog/i.test(text) ? 'medium' : 'low'
 const communitySeverity = (count: number) => count >= 6 ? 'critical' : count >= 3 ? 'confirmed' : 'reported'
 const needsPhoto = (category: string) => category === 'POTHOLE'
-const upload = multer({ storage: multer.diskStorage({ destination: 'uploads/', filename: (_request, file, done) => done(null, `${randomUUID()}${extname(file.originalname).toLowerCase()}`) }), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: (_request, file, done) => done(null, file.mimetype.startsWith('image/')) })
+const upload = multer({ storage: multer.diskStorage({ destination: uploadDir, filename: (_request, file, done) => done(null, `${randomUUID()}${extname(file.originalname).toLowerCase()}`) }), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: (_request, file, done) => done(null, file.mimetype.startsWith('image/')) })
 const row = (incident: Record<string, unknown>) => ({ id: incident.id, category: incident.category, description: incident.description, location: { label: incident.location_label, lat: incident.latitude, lng: incident.longitude }, imageUrl: incident.image_url, impactSeverity: incident.impact_severity, analysisConfidence: Number(incident.analysis_confidence ?? 0), reportCount: incident.report_count, firstReported: new Date(String(incident.first_reported)).getTime(), lastReported: new Date(String(incident.last_reported)).getTime(), resolutionStatus: incident.resolution_status ?? 'open', resolutionCount: Number(incident.resolution_count ?? 0) })
 const incidentWithResolutionCount = async (client: Pool | PoolClient, id: string) => (await client.query('SELECT i.*, count(r.incident_id)::integer AS resolution_count FROM incidents i LEFT JOIN incident_resolutions r ON r.incident_id = i.id WHERE i.id = $1 GROUP BY i.id', [id])).rows[0]
 const gpsDistance = (one: { lat: number; lng: number }, two: { lat: number; lng: number }) => Math.hypot((one.lat - two.lat) * 111_000, (one.lng - two.lng) * 111_000 * Math.cos(one.lat * Math.PI / 180))
@@ -39,7 +43,18 @@ async function aiMatch(description: string, location: { label: string; lat: numb
 }
 
 app.use(express.json())
-app.use('/uploads', express.static('uploads'))
+app.use((request, response, next) => {
+  const origin = request.headers.origin
+  if (origin && allowedOrigins.includes(origin)) {
+    response.setHeader('Access-Control-Allow-Origin', origin)
+    response.setHeader('Vary', 'Origin')
+    response.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-voter-id')
+    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+  }
+  if (request.method === 'OPTIONS') return response.sendStatus(204)
+  next()
+})
+app.use('/uploads', express.static(uploadDir))
 
 app.get('/api/incidents', async (_request, response, next) => {
   try { response.json((await pool.query('SELECT i.*, count(r.incident_id)::integer AS resolution_count FROM incidents i LEFT JOIN incident_resolutions r ON r.incident_id = i.id WHERE NOT i.resolved GROUP BY i.id ORDER BY i.report_count DESC, i.last_reported DESC')).rows.map(row)) } catch (error) { next(error) }
@@ -141,6 +156,10 @@ app.post('/api/incidents/:id/resolutions', upload.single('image'), async (reques
 app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => { console.error(error); response.status(500).json({ error: 'Database request failed.' }) })
 
 async function start() {
+  mkdirSync(uploadDir, { recursive: true })
+  await pool.query('CREATE EXTENSION IF NOT EXISTS pgcrypto').catch(() => {}) // built in since PostgreSQL 13; ignore when unavailable
+  await pool.query('CREATE TABLE IF NOT EXISTS incidents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), category text NOT NULL, description text NOT NULL, location_label text NOT NULL, latitude double precision NOT NULL CHECK (latitude BETWEEN -90 AND 90), longitude double precision NOT NULL CHECK (longitude BETWEEN -180 AND 180), report_count integer NOT NULL DEFAULT 1 CHECK (report_count > 0), first_reported timestamptz NOT NULL DEFAULT now(), last_reported timestamptz NOT NULL DEFAULT now(), resolved boolean NOT NULL DEFAULT false)')
+  await pool.query('CREATE TABLE IF NOT EXISTS incident_votes (incident_id uuid NOT NULL REFERENCES incidents(id) ON DELETE CASCADE, voter_id uuid NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (incident_id, voter_id))')
   await pool.query('ALTER TABLE incidents ADD COLUMN IF NOT EXISTS image_url text')
   await pool.query("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS impact_severity text NOT NULL DEFAULT 'medium'")
   await pool.query('ALTER TABLE incidents ADD COLUMN IF NOT EXISTS analysis_confidence integer NOT NULL DEFAULT 0')

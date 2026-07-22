@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: civicpulse-api
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/incidents
+    disk:
+      name: uploads
+      mountPath: /var/data/uploads
+      sizeGB: 1
+    envVars:
+      # Neon pooled connection string, including ?sslmode=require
+      - key: DATABASE_URL
+        sync: false
+      - key: UPLOAD_DIR
+        value: /var/data/uploads
+      - key: CORS_ORIGIN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
